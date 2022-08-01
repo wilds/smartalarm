@@ -244,19 +244,24 @@ void updateCurrentState() {
   }
 
   if (configMode == HIGH) {
-    currentState = State::pending;
+    newState = State::pending;
   } else if (triggered == HIGH) {
-    currentState = State::triggered;
-  } else if ((micros() - lastBlink) <= 2000) {  //is blinking
-    currentState = State::arming;
+    newState = State::triggered;
+  } else if ((millis() - lastBlink) <= 2000) {  //is blinking
+    newState = State::arming;
   } else if (armHome == HIGH) {
-    currentState = State::armed_home;
-  } else if (armAway == HIGH && (micros() - lastBlink) > 2000) {
-    currentState = State::armed_away;
+    newState = State::armed_home;
+  } else if (armAway == HIGH && (millis() - lastBlink) > 2000) {
+    newState = State::armed_away;
   }
 
   if (newState != currentState) {
     currentState = newState;
+
+     Serial.printf("armHome: %i\n", armHome);
+     Serial.printf("armAway: %i\n", armAway);
+     Serial.printf("triggered: %i\n", triggered);
+     Serial.printf("configMode: %i\n", configMode);
 
     sendStateUpdate();
   }
@@ -264,12 +269,18 @@ void updateCurrentState() {
 }
 
 void sendStateUpdate() {
+
+  Serial.println(F("State update: ") + state[currentState]);
+
   DynamicJsonDocument doc(1024);
   doc["state"] = state[currentState];
 
   char buffer[512];
   /*size_t n =*/ serializeJson(doc, buffer);
-  mqtt.publish(stateTopic.c_str(), buffer, true);
+  if (!mqtt.publish(stateTopic.c_str(), buffer, true)) {
+    Serial.println(F("publish failed"));
+  }
+  yield();
 }
 
 void loop() {
@@ -353,8 +364,10 @@ void bindServerCallback(){
 void initMqtt() {
   if (config.mqttBrokerURL && !config.mqttBrokerURL.isEmpty()) {
     mqtt.setBufferSize(1024);
-    mqtt.setServer(config.mqttBrokerURL.c_str(), config.mqttBrokerPort);
-    mqtt.setCallback(callback);
+    mqtt
+      .setKeepAlive(10)
+      .setServer(config.mqttBrokerURL.c_str(), config.mqttBrokerPort)
+      .setCallback(callback);
   }
 }
 
@@ -396,7 +409,11 @@ void updateMqtt() {
   //  if (!mqttReconnectTimer.active())
   //    connectToMqtt();
   //} else {
-    mqtt.loop();
+    // mqtt.loop()
+    if (!mqtt.loop()) {
+      if (!mqttReconnectTimer.active())
+        connectToMqtt();
+    }
   //}
 }
 
@@ -491,8 +508,9 @@ void sendMQTTDeviceDiscoveryMsg() {
   if (r) {
     Serial.println(F("Discovery message sent successfully"));
   } else {
-    Serial.println(F("ERROR sending discoovery message"));
+    Serial.println(F("ERROR sending discovery message"));
   }
+  yield();
 }
 
 KeypadButton getKey(const char key) {
