@@ -183,7 +183,7 @@ void setup() {
   wifiManager.setConfigPortalBlocking(true);
   //wifiManager.setConfigPortalTimeout(120);
 
-  if(wifiManager.autoConnect()){
+  if(wifiManager.autoConnect()) {
     Serial.println("connected...yeey :)");
     wifiManager.startWebPortal();
   } else {
@@ -403,16 +403,22 @@ void connectToMqtt() {
   }
 }
 
+unsigned long lastClientLoop = millis();
+
 void updateMqtt() {
+
   //if (!mqtt.connected()) {
   //  previusConnected = false;
   //  if (!mqttReconnectTimer.active())
   //    connectToMqtt();
   //} else {
+    if (millis() - lastClientLoop >= 500) {
     // mqtt.loop()
     if (!mqtt.loop()) {
       if (!mqttReconnectTimer.active())
         connectToMqtt();
+      }
+      lastClientLoop = millis();
     }
   //}
 }
