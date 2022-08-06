@@ -128,6 +128,7 @@ String discoveryTopic = "homeassistant/alarm_control_panel/" + config.deviceName
 //String rootTopic = "home/alarm/" + config.deviceName;
 String stateTopic = "home/alarm/" + config.deviceName + "/state";
 String commandTopic = "home/alarm/" + config.deviceName + "/set";
+String availabilityTopic = "home/alarm/" + config.deviceName + "/lwt";
 
 
 //WiFiManager
@@ -383,12 +384,13 @@ void connectToMqtt() {
 
     // Attempt to connect
 
-    bool connected = config.mqttUser.isEmpty() ? mqtt.connect(clientId.c_str()) : mqtt.connect(clientId.c_str(), config.mqttUser.c_str(), config.mqttPassword.c_str());
+    bool connected = config.mqttUser.isEmpty() ? mqtt.connect(clientId.c_str()) : mqtt.connect(clientId.c_str(), config.mqttUser.c_str(), config.mqttPassword.c_str(), availabilityTopic.c_str(), 1, true, "offline");
     if (connected) {
       Serial.println("connected");
       // Once connected, publish an announcement...
 
       mqtt.subscribe(commandTopic.c_str());
+      mqtt.publish(availabilityTopic.c_str(), "online", true);
 
       sendMQTTDeviceDiscoveryMsg();
 
@@ -413,10 +415,10 @@ void updateMqtt() {
   //    connectToMqtt();
   //} else {
     if (millis() - lastClientLoop >= 500) {
-    // mqtt.loop()
-    if (!mqtt.loop()) {
-      if (!mqttReconnectTimer.active())
-        connectToMqtt();
+      // mqtt.loop()
+      if (!mqtt.loop()) {
+        if (!mqttReconnectTimer.active())
+          connectToMqtt();
       }
       lastClientLoop = millis();
     }
@@ -490,11 +492,15 @@ void sendMQTTDeviceDiscoveryMsg() {
   //pl_arm_away payload_arm_night   ARM_NIGHT
   pl_disarm payload_disarm  DISARM
   pl_trig payload_trigger TRIGGER
-
-  //pl_avail payload_available  online
-  //pl_not_avail payload_not_available offline
   */
 
+  //avty_mode          availability_mode
+  doc[F("avty_t")] = availabilityTopic;  //availability_topic
+  //avty_tpl availability_template
+  //pl_avail payload_available  online
+  //pl_not_avail payload_not_available offline
+
+  doc[F("qos")] = 1;
 
   JsonObject device  = doc.createNestedObject("device");
   //device["cu"] = WiFi.localIP().toString(); //configuration_url
