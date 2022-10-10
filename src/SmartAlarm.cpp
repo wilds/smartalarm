@@ -86,10 +86,10 @@ const int COLS_PIN_B = D4;
 const int COLS_PIN_C = -1;
 const int PRESS_PIN = D0; // connected to enable
 
-const int CONFIG_MODE_PIN = D5;
-const int TRIGGERED_PIN = D6;
-const int ARMED_HOME_PIN = D7;
-const int ARMED_AWAY_PIN = D8;
+const int CONFIG_MODE_PIN = D8; //D5
+const int TRIGGERED_PIN = D7;   //D6
+const int ARMED_HOME_PIN = D5;  //D7
+const int ARMED_AWAY_PIN = D6;  //D8
 
 State currentState = State::unknown;
 
