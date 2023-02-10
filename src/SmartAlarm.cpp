@@ -25,7 +25,12 @@ SOFTWARE.
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 
-#include <WiFiManager.h>
+#include <ESPAsyncWebServer.h>
+//#include <ESPAsyncWiFiManager.h>
+#include <WiFiManager.h> // https://github.com/tzapu/WiFiManager
+
+#include <WebSerial.h>
+
 #include <Ticker.h>
 #include <ArduinoOTA.h>
 #include <time.h>
@@ -40,6 +45,8 @@ SOFTWARE.
 
 //include l74hc4051 library
 #include <l74hc4051.h>
+
+#include <ESP8266SSDP.h>
 
 //#define TEST
 
@@ -109,14 +116,18 @@ void writeCommand(const char *command);
 void writeCommand(String command);
 KeypadButton getKey(const char key);
 
-void handleGetState();
-void handleCommand();
-void handleRoute();
+void handleGetState(AsyncWebServerRequest *request);
+void handleCommand(AsyncWebServerRequest *request);
+void handleControlRoute(AsyncWebServerRequest *request);
 void saveParamCallback();
 void bindServerCallback();
 
 void updateCurrentState();
 void sendStateUpdate();
+
+
+/* Message callback of WebSerial */
+void recvMsg(uint8_t *data, size_t len);
 
 //declaring prototypes
 //void configModeCallback(WiFiManager *myWiFiManager);
@@ -140,6 +151,7 @@ WiFiManagerParameter mqttPassword("mqttPassword", "Password", config.mqttPasswor
 WiFiManagerParameter mqttApiKey("mqttApiKey", "Token", config.apiKey.c_str(), 255);
 WiFiManagerParameter deviceName("deviceName", "Device Name", config.deviceName.c_str(), 255);
 
+String hostname = HOSTNAME + String(ESP.getChipId(), HEX);
 
 void setup() {
 
@@ -193,11 +205,8 @@ void setup() {
   }
 
 
-  //Manual Wifi
-  // WiFi.begin(SSID, PASSWORD);
-  String hostname(HOSTNAME);
-  hostname += String(ESP.getChipId(), HEX);
-  WiFi.hostname(hostname);
+  WebSerial.begin(wifiManager.server.get(), "/serial");
+  WebSerial.msgCallback(recvMsg);
 
   // Setup OTA
   Serial.println("Hostname: " + hostname);
@@ -286,7 +295,9 @@ void sendStateUpdate() {
 
 void loop() {
 
-  updateMqtt();
+  if (config.mqttBrokerURL && !config.mqttBrokerURL.isEmpty()) {
+    updateMqtt();
+  }
 
   wifiManager.process();
 
@@ -300,12 +311,12 @@ void loop() {
 void saveParamCallback(){
   Serial.println("[CALLBACK] saveParamCallback fired");
 
-  config.mqttBrokerURL = wifiManager.server->arg("mqttBrokerURL");
-  config.mqttBrokerPort = wifiManager.server->arg("mqttBrokerPort").toInt();
-  config.mqttUser = wifiManager.server->arg("mqttUser");
-  config.mqttPassword = wifiManager.server->arg("mqttPassword");
-  config.apiKey = wifiManager.server->arg("mqttApiKey");
-  config.deviceName = wifiManager.server->arg("deviceName");
+  config.mqttBrokerURL = mqttBrokerURL.getValue();
+  config.mqttBrokerPort = atoi(mqttBrokerPort.getValue());
+  config.mqttUser = mqttUser.getValue();
+  config.mqttPassword = mqttPassword.getValue();
+  config.apiKey = mqttApiKey.getValue();
+  config.deviceName = deviceName.getValue();
 
   config.write();
   //ESP.restart();
@@ -313,9 +324,10 @@ void saveParamCallback(){
 }
 
 
-void handleRoute(){
+void handleControlRoute(AsyncWebServerRequest *request){
+  Serial.println("request " + request->url());
   String page = FPSTR(HTTP_HEAD_START);
-  page.replace(FPSTR(T_v), "Control");
+  page.replace("{v}", "Control");
   page += FPSTR(HTTP_SCRIPT);
   page += FPSTR(HTTP_STYLE);
   page += FPSTR(ALARM_PAGE_STYLE);
@@ -325,40 +337,48 @@ void handleRoute(){
 
   //pitem = FPSTR(HTTP_FORM_START);
   page += FPSTR(ALARM_PAGE_BODY);
-  page.replace(FPSTR(T_c), state[currentState]);
+  page.replace("{c}", state[currentState]);
   //page += FPSTR(HTTP_FORM_END);
   page += FPSTR(HTTP_BACKBTN);
   ///reportStatus(page);
   page += FPSTR(HTTP_END);
 
-  wifiManager.server->send(200, FPSTR(HTTP_HEAD_CT), page);
+  request->send(200, FPSTR(HTTP_HEAD_CT), page);
 
 }
 
-void handleCommand()
+void handleCommand(AsyncWebServerRequest *request)
 {
-  if (wifiManager.server->hasArg(F("plain")) && !wifiManager.server->arg(F("plain")).isEmpty())
+  Serial.println("request " + request->url());
+  AsyncWebServerResponse *response;
+  if (request->hasArg(F("plain")) && !request->arg(F("plain")).isEmpty())
   {
-    String command = wifiManager.server->arg(F("plain"));
+    String command = request->arg(F("plain"));
     writeCommand((command + '\0'));
-    wifiManager.server->sendHeader(FPSTR(HTTP_HEAD_CORS), FPSTR(HTTP_HEAD_CORS_ALLOW_ALL)); // @HTTPHEAD send cors
-    wifiManager.server->send(200, FPSTR(HTTP_HEAD_CT2), F("OK"));
+    response = request->beginResponse(200, FPSTR(HTTP_HEAD_CT2), F("OK"));
   } else {
-    wifiManager.server->sendHeader(FPSTR(HTTP_HEAD_CORS), FPSTR(HTTP_HEAD_CORS_ALLOW_ALL)); // @HTTPHEAD send cors
-    wifiManager.server->send(400, FPSTR(HTTP_HEAD_CT2), F("KO"));
+    response = request->beginResponse(400, FPSTR(HTTP_HEAD_CT2), F("KO"));
   }
+  response->addHeader(FPSTR(HTTP_HEAD_CORS), FPSTR(HTTP_HEAD_CORS_ALLOW_ALL)); // @HTTPHEAD send cors
+  request->send(response);
 }
 
-void handleGetState()
+void handleGetState(AsyncWebServerRequest *request)
 {
-  wifiManager.server->sendHeader(FPSTR(HTTP_HEAD_CORS), FPSTR(HTTP_HEAD_CORS_ALLOW_ALL)); // @HTTPHEAD send cors
-  wifiManager.server->send(200, FPSTR(HTTP_HEAD_CT2), state[currentState]);
+  AsyncWebServerResponse *response = request->beginResponse(200, FPSTR(HTTP_HEAD_CT2), state[currentState]);
+  response->addHeader(FPSTR(HTTP_HEAD_CORS), FPSTR(HTTP_HEAD_CORS_ALLOW_ALL)); // @HTTPHEAD send cors
+  request->send(response);
 }
 
 void bindServerCallback(){
-  wifiManager.server->on("/control", handleRoute);
+  wifiManager.server->on("/control", HTTP_GET, handleControlRoute);
   wifiManager.server->on("/command", HTTP_POST, handleCommand);
+  //server.on("/serial", HTTP_GET, handleSerialRoute);
   // wm.server->on("/info", handleRoute); // you can override wm!
+
+   wifiManager.server->on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/plain", "Hello World");
+  });
 }
 
 
@@ -377,14 +397,14 @@ void connectToMqtt() {
   // Loop until we're reconnected
   if (!mqtt.connected()) {
     // Create client ID
-    String clientId = "esp-" + String(ESP.getChipId(), HEX);
-    Serial.println("clientId: " + clientId);
+    //String clientId = "esp-" + String(ESP.getChipId(), HEX);
+    //Serial.println("clientId: " + clientId);
 
     Serial.print(("Attempting MQTT connection to " + config.mqttBrokerURL + ":" + config.mqttBrokerPort + "... ").c_str());
 
     // Attempt to connect
 
-    bool connected = config.mqttUser.isEmpty() ? mqtt.connect(clientId.c_str()) : mqtt.connect(clientId.c_str(), config.mqttUser.c_str(), config.mqttPassword.c_str(), availabilityTopic.c_str(), 1, true, "offline");
+    bool connected = config.mqttUser.isEmpty() ? mqtt.connect(hostname.c_str()) : mqtt.connect(hostname.c_str(), config.mqttUser.c_str(), config.mqttPassword.c_str(), availabilityTopic.c_str(), 1, true, "offline");
     if (connected) {
       Serial.println("connected");
       // Once connected, publish an announcement...
@@ -567,4 +587,15 @@ void writeCommand(const char *command) {
 
 void writeCommand(String command) {
   writeCommand(command.c_str());
+}
+
+/* Message callback of WebSerial */
+void recvMsg(uint8_t *data, size_t len) {
+  WebSerial.println("Received Data...");
+  String d = "";
+  for (size_t i = 0; i < len; ++i)
+  {
+    d += char(data[i]);
+  }
+  WebSerial.println(d);
 }
